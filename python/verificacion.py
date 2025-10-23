@@ -3,7 +3,7 @@ import time
 import requests
 import re
 
-API_URL = "http://localhost:3000/verificar"
+API_URL = "http://localhost:3000/api/validar/"
 SERIAL_PORT = '/dev/tty.usbmodem1301'
 BAUDRATE = 9600
 
@@ -31,10 +31,10 @@ while True:
             print("UID detectado:", uid)
             try:
                 # Llamada al backend Node
-                response = requests.post(API_URL, json={"uid": uid}, timeout=5)
+                response = requests.get(f"{API_URL}{uid}", timeout=5)
                 data = response.json()
                 status = data.get("status", "error")
-
+                print(data)
                 if status == "ok":
                     ser.write(b"OK\n")
                     print("Usuario autorizado")
