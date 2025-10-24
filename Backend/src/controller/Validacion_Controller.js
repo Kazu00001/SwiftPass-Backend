@@ -13,7 +13,7 @@ export const validar_Uid_nfc = async (req, res) => {
         } else {
             res.status(404).json({ 
                 status: 'not_found',
-                mensaje: 'UID NFC no encontrado.' });
+                mensaje: 'UID NFC no encontrado O no autorizado' });
             console.log('UID NFC No válido:', uid_nfc);
 
         }
