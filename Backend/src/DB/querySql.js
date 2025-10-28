@@ -1,5 +1,13 @@
 import connection from "./connection.js";
+import cron from 'node-cron';
 
+function formatTime(value) {
+    if (!value) return null;
+    const d = new Date(value);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+}
 export async function verificacion_Uid_nfc(uid_nfc) {
     try {
         const [rows] = await connection.execute(
@@ -9,8 +17,7 @@ export async function verificacion_Uid_nfc(uid_nfc) {
             if(rows[0].acces === 1){
                const fecha = new Date();
             const [asistencia]= await connection.execute(
-                "UPDATE Registro_Asistencias SET fecha = ?, status = ? WHERE id_maestro = ?",[fecha, 4, rows[0].id_maestro]
-
+                "UPDATE Registro_Asistencias SET fecha_update = ?, status = ? WHERE id_maestro = ?",[fecha, 4, rows[0].id_maestro]
             );
             if(asistencia.affectedRows < 0){
                 throw new Error('Error al registrar la asistencia.');
@@ -35,11 +42,89 @@ export async function verificacion_Uid_nfc(uid_nfc) {
 export async function teacher_list(){
     try{
         const [teacherids] = await connection.execute(
-            'SELECT id_maestro FROM Maestros'
+            'SELECT id_maestro, nombre FROM Maestros'
         );
-        if(teacherids.length <= 0){ console.log("No hay maestros registrados"); }
-        return teacherids;
+        if (!teacherids || teacherids.length === 0) {
+            console.log('No hay maestros registrados');
+            return [];
+        }
+
+        // IDs de los maestros
+        const maestrosIds = teacherids.map(t => t.id_maestro);
+
+        // Construir placeholders para la cláusula IN de forma segura
+        const placeholders = maestrosIds.map(() => '?').join(',');
+
+        // Obtener fotos (una por maestro si existe)
+        const [fotos] = await connection.execute(
+            `SELECT id_record, src FROM Imagenes WHERE tabla_origen = ? AND id_record IN (${placeholders})`,
+            ['Maestros', ...maestrosIds]
+        );
+
+        const [timeandstatus] = await connection.execute(
+            `SELECT id_maestro, fecha, status FROM Registro_Asistencias WHERE id_maestro IN (${placeholders}) AND DATE(fecha) = CURDATE()`,
+            [...maestrosIds]
+        );
+
+        // Mapas para acceso rápido
+        const fotoMap = new Map();
+        for (const f of fotos) {
+            if (!fotoMap.has(f.id_record)) fotoMap.set(f.id_record, f.src);
+        }
+
+        const attendanceMap = new Map();
+        for (const a of timeandstatus) {
+            const existing = attendanceMap.get(a.id_maestro);
+            if (!existing || new Date(a.fecha) > new Date(existing.fecha)) {
+                attendanceMap.set(a.id_maestro, { fecha: a.fecha, status: a.status });
+            }
+        }
+        const teacherData = teacherids.map(teacher => {
+            const photo = fotoMap.get(teacher.id_maestro) || null;
+            const attendance = attendanceMap.get(teacher.id_maestro) || null;
+
+            return {
+                id: teacher.id_maestro,
+                name: teacher.nombre,
+                photo,
+                time: attendance ? formatTime(attendance.fecha) : null,
+                status: attendance ? attendance.status : null
+            };
+        });
+
+        return teacherData;
     } catch (error) {
         throw error;
     }
 }; 
+cron.schedule('0 0 * * *', async () => {
+  const conn = await connection.getConnection();
+  try {
+    const insertSql = `
+      INSERT INTO Registro_Asistencias (id_maestro, id_nfc, status, fecha_update)
+      SELECT
+        m.id_maestro,
+        nfc.id_nfc,
+        CASE WHEN p.aprobado = 1 THEN 2 ELSE 3 END AS status,
+        NOW()
+      FROM Maestros m
+      INNER JOIN NFC_Maestros nfc ON m.id_maestro = nfc.id_maestro
+      LEFT JOIN Permisos p
+        ON p.id_maestro = m.id_maestro
+        AND p.fecha_inicio <= CURDATE()
+        AND p.fecha_fin >= CURDATE()
+      WHERE NOT EXISTS (
+        SELECT 1 FROM Registro_Asistencias r
+        WHERE r.id_maestro = m.id_maestro AND DATE(r.fecha) = CURDATE()
+      );
+    `;
+    await conn.execute(insertSql);
+    console.log('Cron: insertadas asistencias faltantes (si las había).');
+  } catch (err) {
+    console.error('Error en cron de asistencias:', err);
+  } finally {
+    conn.release();
+  }
+}, {
+  timezone: 'America/Mexico_City'
+});

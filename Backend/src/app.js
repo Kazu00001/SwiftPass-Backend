@@ -1,11 +1,13 @@
 import dotenv from 'dotenv';
+import cors from 'cors';
 import express from 'express';
 import connection from './DB/connection.js';
 import validacionRouters from './routers/Validacion_Routers.js';
 import teacherListRouters from './routers/Teacher_list_Routers.js';
 dotenv.config({quiet: true});
 const app = express();
-
+app.use(cors());
+app.use(express.json());
 app.use('/api', validacionRouters);
 app.use('/api', teacherListRouters);
 
