@@ -97,6 +97,59 @@ export async function teacher_list(){
         throw error;
     }
 }; 
+export const inset_new_teacher = async (nombre,correo,telefono,uid_nfc) => {
+    //nombre, correo, telefono, foto (opcional)
+    //segunda consulta para insertar nfc, id_maestro, uid
+    try {
+            const [saveTeacher] = await connection.execute(
+            ' INSERT INTO Maestros(nombre, correo, telefono) VALUES(?,?,?)',[nombre, correo, telefono]
+        );
+        if(saveTeacher.affectedRows > 0){
+            const [save_nfc] = await connection.execute(
+                'INSERT INTO NFC_Maestros(id_maestro, uid, acces) VALUES (?,?,?)',[saveTeacher.insertId, uid_nfc, 0]
+            );
+            if(save_nfc.affectedRows > 0){
+                return true;
+            }else{
+                return false;
+            }
+        }
+    } catch (error) {
+        return false;
+        throw error;
+    }
+}
+export const insert_new_permiso = async (id_maestro,nombre_permiso,descripcion, fecha_fin,fecha_inicio) => {
+    try {
+        const [permiso] = await connection.execute(
+            'INSERT INTO Permisos(id_maestro, nombre_permiso, descripcion, fecha_inicio, fecha_fin) VALUES (?,?,?,?,?)'
+            ,[id_maestro,nombre_permiso,descripcion, fecha_fin,fecha_inicio]);
+            if(permiso.affectedRows > 0){
+                return true;
+            }else{
+                return false;
+            }   
+    } catch (error) {
+    }
+}
+export const insert_new_justificante = async (id_maestro, motivo, fecha) => {
+    try {
+        const [justificante] = await connection.execute(
+            'INSERT INTO `Justificantes(id_maestro, motivo, fecha) VALUES (?,?,?,?)',[id_maestro, motivo, fecha]
+        )
+        if(justificante.affectedRows > 0){
+            return true 
+        }else{
+            return false
+        }
+    } catch (error) {
+        
+    }
+}   
+
+
+
+// Tarea programada para ejecutar diariamente a la medianoche
 cron.schedule('0 0 * * *', async () => {
   const conn = await connection.getConnection();
   try {
