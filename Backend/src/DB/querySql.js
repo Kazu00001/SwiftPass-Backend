@@ -42,20 +42,17 @@ export async function verificacion_Uid_nfc(uid_nfc) {
 export async function teacher_list(){
     try{
         const [teacherids] = await connection.execute(
-            'SELECT id_maestro, nombre FROM Maestros'
+            'SELECT id_maestro, nombre, correo FROM Maestros'
         );
         if (!teacherids || teacherids.length === 0) {
             console.log('No hay maestros registrados');
             return [];
         }
 
-        // IDs de los maestros
         const maestrosIds = teacherids.map(t => t.id_maestro);
 
-        // Construir placeholders para la cláusula IN de forma segura
         const placeholders = maestrosIds.map(() => '?').join(',');
 
-        // Obtener fotos (una por maestro si existe)
         const [fotos] = await connection.execute(
             `SELECT id_record, src FROM Imagenes WHERE tabla_origen = ? AND id_record IN (${placeholders})`,
             ['Maestros', ...maestrosIds]
@@ -66,7 +63,36 @@ export async function teacher_list(){
             [...maestrosIds]
         );
 
-        // Mapas para acceso rápido
+        const [schedules] = await connection.execute(
+            `SELECT s.id_schedule AS id_materia,
+                    s.id_maestro,
+                    m.nombre_materia,
+                    s.salon,
+                    DATE_FORMAT(s.start_time, '%H:%i') AS startTime,
+                    DATE_FORMAT(s.end_time,   '%H:%i') AS endTime,
+                    s.day_of_week
+            FROM Schedules s
+            JOIN Materias m ON m.id_materia = s.id_materia
+            WHERE s.id_maestro IN (${placeholders})
+            ORDER BY s.id_maestro, s.day_of_week, s.start_time`,
+            [...maestrosIds]
+        );
+         if (!schedules || schedules.length === 0) {   
+            console.log('No hay horarios registrados');
+        }
+        const scheduleMap = new Map();
+        for (const s of schedules) {
+            if (!scheduleMap.has(s.id_maestro)) scheduleMap.set(s.id_maestro, []);
+            scheduleMap.get(s.id_maestro).push({
+                id_materia: s.id_materia,
+                id_maestro: s.id_maestro,
+                nombre_materia: s.nombre_materia,
+                salon: s.salon,
+                startTime: s.startTime,
+                endTime: s.endTime,
+                day_of_week: s.day_of_week
+            });
+        }
         const fotoMap = new Map();
         for (const f of fotos) {
             if (!fotoMap.has(f.id_record)) fotoMap.set(f.id_record, f.src);
@@ -79,16 +105,43 @@ export async function teacher_list(){
                 attendanceMap.set(a.id_maestro, { fecha: a.fecha, status: a.status });
             }
         }
+        const DAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+
         const teacherData = teacherids.map(teacher => {
             const photo = fotoMap.get(teacher.id_maestro) || null;
             const attendance = attendanceMap.get(teacher.id_maestro) || null;
+            const scheduleArr = scheduleMap.get(teacher.id_maestro) || [];
+
+            // construir objeto por día
+            const scheduleObj = {
+                monday: [],
+                tuesday: [],
+                wednesday: [],
+                thursday: [],
+                friday: []
+            };
+
+            for (const s of scheduleArr) {
+                const idx = (Number(s.day_of_week) || 1) - 1; 
+                const dayKey = DAY_KEYS[idx] || 'monday';
+                scheduleObj[dayKey].push({
+                    id: s.id_materia,
+                    id_maestro: s.id_maestro,
+                    subject: s.nombre_materia,
+                    location: s.salon,
+                    startTime: s.startTime,
+                    endTime: s.endTime
+                });
+            }
 
             return {
                 id: teacher.id_maestro,
                 name: teacher.nombre,
                 photo,
                 time: attendance ? formatTime(attendance.fecha) : null,
-                status: attendance ? attendance.status : null
+                status: attendance ? attendance.status : null,
+                email: teacher.correo,
+                schedule: scheduleObj
             };
         });
 
@@ -97,12 +150,12 @@ export async function teacher_list(){
         throw error;
     }
 }; 
-export const inset_new_teacher = async (nombre,correo,telefono,uid_nfc) => {
+export const inset_new_teacher = async (nombre,correo,telefono,uid_nfc,departamento) => {
     //nombre, correo, telefono, foto (opcional)
     //segunda consulta para insertar nfc, id_maestro, uid
     try {
             const [saveTeacher] = await connection.execute(
-            ' INSERT INTO Maestros(nombre, correo, telefono) VALUES(?,?,?)',[nombre, correo, telefono]
+            ' INSERT INTO Maestros(nombre, correo, telefono, departamento) VALUES(?,?,?,?)',[nombre, correo, telefono,departamento]
         );
         if(saveTeacher.affectedRows > 0){
             const [save_nfc] = await connection.execute(
@@ -148,8 +201,6 @@ export const insert_new_justificante = async (id_maestro, motivo, fecha) => {
 }   
 
 
-
-// Tarea programada para ejecutar diariamente a la medianoche
 cron.schedule('0 0 * * *', async () => {
   const conn = await connection.getConnection();
   try {
