@@ -42,7 +42,14 @@ export async function verificacion_Uid_nfc(uid_nfc) {
 export async function teacher_list(){
     try{
         const [teacherids] = await connection.execute(
-            'SELECT id_maestro, nombre, correo FROM Maestros'
+            `SELECT 
+            m.id_maestro, 
+            m.nombre, 
+            m.correo,
+            m.departamento, 
+            d.name 
+            FROM Maestros m
+            LEFT JOIN Departments d ON m.departamento = d.id_department`
         );
         if (!teacherids || teacherids.length === 0) {
             console.log('No hay maestros registrados');
@@ -141,6 +148,7 @@ export async function teacher_list(){
                 time: attendance ? formatTime(attendance.fecha) : null,
                 status: attendance ? attendance.status : null,
                 email: teacher.correo,
+                department: teacher.name,
                 schedule: scheduleObj
             };
         });
