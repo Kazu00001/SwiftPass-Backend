@@ -240,3 +240,18 @@ cron.schedule('0 0 * * *', async () => {
 }, {
   timezone: 'America/Mexico_City'
 });
+
+export async function getUser(username) {
+    try {
+        const [user] = await connection.execute(
+            'SELECT * FROM Usuarios WHERE username = ?', [username]
+        );
+        if (user.length > 0) {
+            return user[0];
+        } else {
+            return null;
+        }
+    } catch (error) {
+        
+    }
+}
