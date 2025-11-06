@@ -196,7 +196,7 @@ export const insert_new_permiso = async (id_maestro,nombre_permiso,descripcion, 
 export const insert_new_justificante = async (id_maestro, motivo, fecha) => {
     try {
         const [justificante] = await connection.execute(
-            'INSERT INTO `Justificantes(id_maestro, motivo, fecha) VALUES (?,?,?,?)',[id_maestro, motivo, fecha]
+            'INSERT INTO Justificantes (id_maestro, motivo, fecha) VALUES (?,?,?)',[id_maestro, motivo, fecha]
         )
         if(justificante.affectedRows > 0){
             return true 
@@ -253,5 +253,145 @@ export async function getUser(username) {
         }
     } catch (error) {
         
+    }
+}
+const setdateinformat = (value) => {
+    if (!value) return null;
+    const d = new Date(value);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+}
+export async function attendance_data(id_maestro) {
+    try {
+        const [rows] = await connection.execute(
+            'SELECT fecha, status FROM Registro_Asistencias WHERE id_maestro = ? ORDER BY fecha DESC',
+            [id_maestro]
+        );
+        if (!rows || rows.length === 0) return [];
+
+        return rows.map(r => ({
+            fecha: setdateinformat(r.fecha),
+            estado: r.status
+        }));
+    } catch (error) {
+        console.error('attendance_data error:', error);
+        throw error;
+    }
+}
+export async function getScheduleByTeacher(id_maestro) {
+    try {
+        // Query schedules for the given teacher
+        const [schedules] = await connection.execute(
+            `SELECT s.id_schedule AS id_materia,
+                    s.id_maestro,
+                    m.nombre_materia,
+                    s.salon,
+                    DATE_FORMAT(s.start_time, '%H:%i') AS startTime,
+                    DATE_FORMAT(s.end_time,   '%H:%i') AS endTime,
+                    s.day_of_week
+            FROM Schedules s
+            JOIN Materias m ON m.id_materia = s.id_materia
+            WHERE s.id_maestro = ?
+            ORDER BY s.day_of_week, s.start_time`,
+            [id_maestro]
+        );
+
+        // Keys for days (DB stores 1..7)
+        const DAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+
+        // Initialize empty schedule object for the teacher
+        const scheduleObj = {
+            monday: [],
+            tuesday: [],
+            wednesday: [],
+            thursday: [],
+            friday: [],
+            saturday: [],
+            sunday: []
+        };
+
+        // If no schedules, return empty object (easier for the client)
+        if (!schedules || schedules.length === 0) {
+            // console.log('No hay horarios registrados');
+            return scheduleObj;
+        }
+
+        // Fill scheduleObj grouping by day_of_week
+        for (const s of schedules) {
+            const idx = (Number(s.day_of_week) || 1) - 1; // map 1..7 to 0..6
+            const dayKey = DAY_KEYS[idx] || 'monday';
+            scheduleObj[dayKey].push({
+                id: s.id_materia,
+                id_maestro: s.id_maestro,
+                subject: s.nombre_materia,
+                location: s.salon,
+                startTime: s.startTime,
+                endTime: s.endTime,
+                day_of_week: s.day_of_week
+            });
+        }
+
+        return scheduleObj;
+    } catch (error) {
+        console.error('getScheduleByTeacher error:', error);
+        throw error;
+    }
+}
+export async function getListOfPermissionsAndJust(id_maestro) {
+    try {
+        // Obtener permisos
+        const [permisos] = await connection.execute(
+            `SELECT id_permiso, id_maestro, nombre_permiso, descripcion, fecha_inicio, fecha_fin, aprobado
+             FROM Permisos WHERE id_maestro = ?`,
+            [id_maestro]
+        );
+
+        // Obtener justificantes
+        const [justificantes] = await connection.execute(
+            `SELECT id_justificante, id_maestro, motivo, fecha, autorizado FROM Justificantes WHERE id_maestro = ?`,
+            [id_maestro]
+        );
+
+        const results = [];
+
+        // permisos: status = 2
+        for (const p of permisos) {
+            results.push({
+                id: p.id_permiso,
+                date: setdateinformat(p.fecha_inicio) || null,
+                status: 2,
+                type: 'permiso',
+                title: p.nombre_permiso,
+                description: p.descripcion,
+                fecha_fin: setdateinformat(p.fecha_fin) || null,
+                autorizado: p.autorizado
+            });
+        }
+
+        // justificantes: status = 1
+        for (const j of justificantes) {
+            results.push({
+                id: j.id_justificante,
+                date: setdateinformat(j.fecha) || null,
+                status: 1,
+                type: 'justificante',
+                motivo: j.motivo,
+                autorizado: j.autorizado
+            });
+        }
+
+        // ordenar por fecha descendente
+        results.sort((a, b) => {
+            const da = a.date || '';
+            const db = b.date || '';
+            return db.localeCompare(da);
+        });
+
+        return results;
+    } catch (error) {
+        console.error('getListOfPermissionsAndJust error:', error);
+        throw error;
     }
 }

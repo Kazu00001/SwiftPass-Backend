@@ -1,16 +1,9 @@
 import express from 'express';
-import { teacher_list } from '../DB/querySql.js';
-
+import { get_Teacher_list, get_Attendance_data , schedule, get_Permissions_and_Justificantes} from '../controller/Teacher_list_Controller.js';
 const router = express.Router();
 
-router.get('/teachers', async (req, res) => {
-    try {
-        const teachers = await teacher_list();
-        res.json(teachers);
-    } catch (error) {
-        console.error('Error al obtener la lista de maestros:', error);
-        res.status(500).json({ error: 'Error interno del servidor' });
-    }
-});
-
+router.get('/teachers', get_Teacher_list);
+router.get('/teachers/:id_maestro/attendance', get_Attendance_data);
+router.get('/teachers/:id_maestro/schedule', schedule);
+router.get('/teachers/:id_maestro/records', get_Permissions_and_Justificantes);
 export default router;
