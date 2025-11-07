@@ -5,6 +5,7 @@ import connection from './DB/connection.js';
 import validacionRouters from './routers/Validacion_Routers.js';
 import teacherListRouters from './routers/Teacher_list_Routers.js';
 import loginRouters from './routers/LoginRouters.js';
+import reportsRouters from './routers/Reports_Routers.js';
 dotenv.config({quiet: true});
 const app = express();
 app.use(cors());
@@ -12,6 +13,7 @@ app.use(express.json());
 app.use('/api', validacionRouters);
 app.use('/api', teacherListRouters);
 app.use('/api', loginRouters);
+app.use('/api/reports', reportsRouters);
 
 
 

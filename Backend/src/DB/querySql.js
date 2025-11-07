@@ -16,12 +16,20 @@ export async function verificacion_Uid_nfc(uid_nfc) {
         if (rows.length > 0 ) {
             if(rows[0].acces === 1){
                const fecha = new Date();
-            const [asistencia]= await connection.execute(
-                "UPDATE Registro_Asistencias SET fecha_update = ?, status = ? WHERE id_maestro = ?",[fecha, 4, rows[0].id_maestro]
-            );
-            if(asistencia.affectedRows < 0){
-                throw new Error('Error al registrar la asistencia.');
-            }
+                        const [asistencia] = await connection.execute(
+                                `UPDATE Registro_Asistencias SET fecha_update = ?, status = ?
+                                 WHERE id_asistencia = (
+                                     SELECT id_asistencia FROM (
+                                         SELECT id_asistencia FROM Registro_Asistencias
+                                         WHERE id_maestro = ?
+                                         ORDER BY fecha DESC LIMIT 1
+                                     ) x
+                                 )`,
+                                [fecha, 4, rows[0].id_maestro]
+                        );
+                        if (!asistencia || asistencia.affectedRows === 0) {
+                                throw new Error('Error al registrar la asistencia (no se encontró registro reciente).');
+                        }
             return true;
            }else{
             const [asistencia_denegada]= await connection.execute(
@@ -46,7 +54,7 @@ export async function teacher_list(){
             m.id_maestro, 
             m.nombre, 
             m.correo,
-            m.departamento, 
+            m.departamento,
             d.name 
             FROM Maestros m
             LEFT JOIN Departments d ON m.departamento = d.id_department`
@@ -65,10 +73,20 @@ export async function teacher_list(){
             ['Maestros', ...maestrosIds]
         );
 
-        const [timeandstatus] = await connection.execute(
-            `SELECT id_maestro, fecha, status FROM Registro_Asistencias WHERE id_maestro IN (${placeholders}) AND DATE(fecha) = CURDATE()`,
+                // Traer sólo el registro más reciente por maestro para el día de hoy.
+                // Usamos una subconsulta que obtiene MAX(fecha) por id_maestro y la join-eamos
+                // para recuperar fecha_update y status del registro más reciente.
+                const [timeandstatus] = await connection.execute(
+                        `SELECT r.id_maestro, r.fecha_update AS fecha, r.status
+                         FROM Registro_Asistencias r
+                         INNER JOIN (
+                             SELECT id_maestro, MAX(fecha) AS max_fecha
+                             FROM Registro_Asistencias
+                             WHERE DATE(fecha) = CURDATE() AND id_maestro IN (${placeholders})
+                             GROUP BY id_maestro
+             ) recent ON recent.id_maestro = r.id_maestro AND recent.max_fecha = r.fecha`,
             [...maestrosIds]
-        );
+                );
 
         const [schedules] = await connection.execute(
             `SELECT s.id_schedule AS id_materia,
@@ -392,6 +410,86 @@ export async function getListOfPermissionsAndJust(id_maestro) {
         return results;
     } catch (error) {
         console.error('getListOfPermissionsAndJust error:', error);
+        throw error;
+    }
+}
+export async function UpdateDayProfileAdmin (id_maestro, date, status) {
+    try {
+        // Validar parámetros recibidos
+        if (typeof id_maestro === 'undefined' || !id_maestro) throw new Error('id_maestro is required');
+        if (typeof date === 'undefined' || !date) throw new Error('date is required (YYYY-MM-DD)');
+        if (typeof status === 'undefined' || status === null) throw new Error('status is required');
+
+        // Construir rango para el día (start inclusive, end exclusive)
+        const start = `${date} 00:00:00`;
+        const nextDay = new Date(date + 'T00:00:00');
+        nextDay.setDate(nextDay.getDate() + 1);
+        const end = `${nextDay.getFullYear()}-${String(nextDay.getMonth()+1).padStart(2,'0')}-${String(nextDay.getDate()).padStart(2,'0')} 00:00:00`;
+
+        const [result] = await connection.execute(
+            `UPDATE Registro_Asistencias
+             SET status = ?, fecha_update = ?
+             WHERE id_asistencia = (
+               SELECT id_asistencia FROM (
+                 SELECT id_asistencia FROM Registro_Asistencias
+                 WHERE id_maestro = ? AND fecha >= ? AND fecha < ?
+                 ORDER BY fecha DESC LIMIT 1
+               ) x
+             )`,
+            [status, new Date(), id_maestro, start, end]
+        );
+
+        return result.affectedRows > 0;
+    } catch (error) {
+        throw error;
+    }
+
+}
+
+// Report data: obtener asistencias, permisos y justificantes en un rango de fechas
+export async function getReportData(startDate, endDate, id_maestro = null) {
+    try {
+        const params = [];
+        let whereTeacher = '';
+        if (id_maestro) {
+            whereTeacher = ' AND r.id_maestro = ?';
+            params.push(id_maestro);
+        }
+
+        // Asistencias / inasistencias
+        const [asistencias] = await connection.execute(
+            `SELECT r.id_asistencia, r.id_maestro, r.id_nfc, r.status, r.fecha, m.nombre AS nombre_maestro
+             FROM Registro_Asistencias r
+             JOIN Maestros m ON m.id_maestro = r.id_maestro
+             WHERE DATE(r.fecha) BETWEEN ? AND ? ${whereTeacher}
+             ORDER BY r.id_maestro, r.fecha`,
+            [startDate, endDate, ...params]
+        );
+
+        // Permisos en rango
+        const [permisos] = await connection.execute(
+            `SELECT p.id_permiso, p.id_maestro, p.nombre_permiso, p.descripcion, p.fecha_inicio, p.fecha_fin, p.aprobado, m.nombre as nombre_maestro
+             FROM Permisos p
+             JOIN Maestros m ON m.id_maestro = p.id_maestro
+             WHERE (DATE(p.fecha_inicio) BETWEEN ? AND ?) OR (DATE(p.fecha_fin) BETWEEN ? AND ?)
+             ${id_maestro ? ' AND p.id_maestro = ?' : ''}
+             ORDER BY p.id_maestro, p.fecha_inicio`,
+            id_maestro ? [startDate, endDate, startDate, endDate, id_maestro] : [startDate, endDate, startDate, endDate]
+        );
+
+        // Justificantes en rango
+        const [justificantes] = await connection.execute(
+            `SELECT j.id_justificante, j.id_maestro, j.motivo, j.fecha, j.autorizado, m.nombre as nombre_maestro
+             FROM Justificantes j
+             JOIN Maestros m ON m.id_maestro = j.id_maestro
+             WHERE DATE(j.fecha) BETWEEN ? AND ? ${id_maestro ? ' AND j.id_maestro = ?' : ''}
+             ORDER BY j.id_maestro, j.fecha`,
+            id_maestro ? [startDate, endDate, id_maestro] : [startDate, endDate]
+        );
+
+        return { asistencias, permisos, justificantes };
+    } catch (error) {
+        console.error('getReportData error:', error);
         throw error;
     }
 }
