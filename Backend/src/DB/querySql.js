@@ -285,7 +285,7 @@ export const pendientes_justificantesyJustificantes= async () => {
         );
 
         const permisosMapped = (permisos || []).map(p => ({
-            id: `T${String(p.id_maestro).padStart(3, '0')}`,
+            id: `H${String(p.id_permiso).padStart(4, '0')}`,
             name: p.name,
             photo: p.maestro_photo || null,
             // try hora_regristro (if exists), otherwise fallback to fecha_inicio
@@ -306,7 +306,7 @@ export const pendientes_justificantesyJustificantes= async () => {
         }));
 
         const justificantesMapped = (justificantes || []).map(j => ({
-            id: `T${String(j.id_maestro).padStart(3, '0')}`,
+            id: `C${String(j.id_justificante).padStart(3, '0')}`,
             name: j.name,
             photo: j.maestro_photo || null,
             time: j.fecha ? formatTime(j.fecha) : null,
