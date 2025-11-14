@@ -6,7 +6,8 @@ import { generar_justificante } from '../controller/Justificante_Controller.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const uploadDir = path.join(__dirname, '..', 'public', 'images');
+// store uploads in Backend/public/images (two levels up from src/routers)
+const uploadDir = path.join(__dirname, '..', '..', 'public', 'images');
 
 const storage = multer.diskStorage({
 	destination: function (req, file, cb) {

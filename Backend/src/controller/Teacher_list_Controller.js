@@ -1,5 +1,6 @@
 import {teacher_list, attendance_data, getScheduleByTeacher, getListOfPermissionsAndJust,UpdateDayProfileAdmin, list_permisos_and_justificantes,
-    estadistica_asistencias, teacher_ausent, pendientes_justificantesyJustificantes, pendientes_u_apro_justificantesyJustificantes, update_aprove_status, getImageForTeacher} from "../DB/querySql.js";
+    estadistica_asistencias, teacher_ausent, pendientes_justificantesyJustificantes, pendientes_u_apro_justificantesyJustificantes, update_aprove_status, getImageForTeacher,
+    insert_new_justificante, insert_new_permiso, insertImage} from "../DB/querySql.js";
 
 export const get_Teacher_list =  async (req, res) => {
     try {
@@ -208,6 +209,54 @@ export const getTeacherProfileImage = async (req, res) => {
         return res.status(200).json({ status: 'ok', src: finalSrc });
     } catch (error) {
         console.error('getTeacherProfileImage error:', error);
+        return res.status(500).json({ status: 'error', mensaje: 'Error del servidor.' });
+    }
+}
+
+// Controlador unificado para crear permiso o justificante y opcionalmente subir imagen
+export const create_teacher_record = async (req, res) => {
+    const { id } = req.params; // teacher id from route
+    const { type, titulo, motivo, fecha, fecha_inicio, fecha_fin } = req.body;
+
+    // inferir tipo si no viene explícito
+    let recordType = (type || (fecha ? 'justificante' : (fecha_inicio && fecha_fin ? 'permiso' : null)));
+    if (!recordType) return res.status(400).json({ status: 'error', mensaje: 'No se pudo inferir el tipo de registro. Enviar type o fechas.' });
+    recordType = String(recordType).toLowerCase();
+
+    try {
+        if (recordType === 'justificante') {
+            if (!motivo || !fecha) return res.status(400).json({ status: 'error', mensaje: 'Faltan campos para justificante (motivo, fecha).' });
+            // titulo opcional
+            const insertId = await insert_new_justificante(id, titulo || null, motivo, fecha);
+            if (!insertId) return res.status(500).json({ status: 'error', mensaje: 'No se pudo crear justificante.' });
+
+            let src = null;
+            if (req.file) {
+                const filename = req.file.filename;
+                src = `/images/${filename}`;
+                try { await insertImage('Justificantes', insertId, src); } catch (err) { console.error('Error insertImage:', err); }
+            }
+
+            return res.status(201).json({ status: 'ok', type: 'justificante', id_justificante: insertId, image: src });
+        } else if (recordType === 'permiso') {
+            if (!motivo || !fecha_inicio || !fecha_fin) return res.status(400).json({ status: 'error', mensaje: 'Faltan campos para permiso (motivo, fecha_inicio, fecha_fin).' });
+            // insert_new_permiso signature: (id_maestro, nombre_permiso, descripcion, fecha_inicio, fecha_fin)
+            const insertId = await insert_new_permiso(id, motivo, '', fecha_inicio, fecha_fin);
+            if (!insertId) return res.status(500).json({ status: 'error', mensaje: 'No se pudo crear permiso.' });
+
+            let src = null;
+            if (req.file) {
+                const filename = req.file.filename;
+                src = `/images/${filename}`;
+                try { await insertImage('Permisos', insertId, src); } catch (err) { console.error('Error insertImage:', err); }
+            }
+
+            return res.status(201).json({ status: 'ok', type: 'permiso', id_permiso: insertId, image: src });
+        } else {
+            return res.status(400).json({ status: 'error', mensaje: 'type inválido. Debe ser "permiso" o "justificante".' });
+        }
+    } catch (error) {
+        console.error('create_teacher_record error:', error);
         return res.status(500).json({ status: 'error', mensaje: 'Error del servidor.' });
     }
 }

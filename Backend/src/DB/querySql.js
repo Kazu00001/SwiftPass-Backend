@@ -410,17 +410,19 @@ export const pendientes_u_apro_justificantesyJustificantes = async () => {
     }
 };
 
-export const insert_new_permiso = async (id_maestro,nombre_permiso,descripcion, fecha_fin,fecha_inicio) => {
+export const insert_new_permiso = async (id_maestro, nombre_permiso, descripcion, fecha_inicio, fecha_fin) => {
     try {
-        const [permiso] = await connection.execute(
-            'INSERT INTO Permisos(id_maestro, nombre_permiso, descripcion, fecha_inicio, fecha_fin) VALUES (?,?,?,?,?)'
-            ,[id_maestro,nombre_permiso,descripcion, fecha_fin,fecha_inicio]);
-            if(permiso.affectedRows > 0){
-                return true;
-            }else{
-                return false;
-            }   
+        // hora_regristro no tiene valor por defecto en la tabla, guardamos la hora de registro ahora (NOW())
+        const [result] = await connection.execute(
+            'INSERT INTO Permisos(id_maestro, nombre_permiso, descripcion, fecha_inicio, fecha_fin, hora_regristro) VALUES (?,?,?,?,?, NOW())',
+            [id_maestro, nombre_permiso, descripcion, fecha_inicio, fecha_fin]
+        );
+        // devolver el id insertado para permitir asociar imágenes
+        if (result && result.insertId) return result.insertId;
+        return null;
     } catch (error) {
+        console.error('insert_new_permiso error:', error);
+        throw error;
     }
 }
 export const insert_new_justificante = async (id_maestro, titulo, motivo, fecha) => {
