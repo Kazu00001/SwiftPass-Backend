@@ -7,3 +7,4 @@ const router = express.Router();
 router.get('/attendance', ReportsController.generateAttendanceReport);
 
 export default router;
+ 

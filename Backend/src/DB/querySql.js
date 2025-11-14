@@ -601,7 +601,7 @@ export async function getListOfPermissionsAndJust(id_maestro) {
         // permisos: status = 2
         for (const p of permisos) {
             results.push({
-                id: p.id_permiso,
+                id:`P${String(p.id_permiso).padStart(3, '0')}`,
                 date: setdateinformat(p.fecha_inicio) || null,
                 status: 2,
                 type: 'permiso',
@@ -616,7 +616,7 @@ export async function getListOfPermissionsAndJust(id_maestro) {
         // justificantes: status = 1
         for (const j of justificantes) {
             results.push({
-                id: j.id_justificante,
+                id: `J${String(j.id_justificante).padStart(3, '0')}`,
                 date: setdateinformat(j.fecha) || null,
                 status: 1,
                 type: 'justificante',
@@ -676,7 +676,7 @@ export const list_permisos_and_justificantes = async (id_maestro) => {
         const items = [];
         for (const p of permisos) {
             items.push({
-                id: p.id_permiso,
+                id: `P${String(p.id_permiso).padStart(3, '0')}`,
                 type: 'permiso',
                 title: p.nombre_permiso,
                 description: p.descripcion,
@@ -686,7 +686,7 @@ export const list_permisos_and_justificantes = async (id_maestro) => {
         }
         for (const j of justificantes) {
             items.push({
-                id: j.id_justificante,
+                id: `J${String(j.id_justificante).padStart(3, '0')}`,
                 type: 'justificante',
                 titulo: j.titulo || null,
                 motivo: j.motivo,
@@ -716,7 +716,7 @@ export const list_permisos_and_justificantes = async (id_maestro) => {
                     for (const p of permisos) {
                         const timeVal = p.fecha_inicio ? formatTime(new Date(p.fecha_inicio)) : null;
                         flat.push({
-                            id: teacherId,
+                            id: `P${String(p.id_permiso).padStart(3, '0')}`,
                             name: teacher.nombre,
                             photo,
                             time: timeVal,
@@ -727,7 +727,7 @@ export const list_permisos_and_justificantes = async (id_maestro) => {
                     for (const j of justificantes) {
                         const timeVal = j.fecha ? formatTime(new Date(j.fecha)) : null;
                         flat.push({
-                            id: teacherId,
+                            id: `J${String(j.id_justificante).padStart(3, '0')}`,
                             name: teacher.nombre,
                             photo,
                             time: timeVal,
