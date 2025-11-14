@@ -1,9 +1,10 @@
 import {insert_new_justificante} from '../DB/querySql.js';
 
 export const generar_justificante = async (req, res) => {
-    const { id_maestro, motivo, fecha_inicio, fecha_fin } = req.body;
+    // Expect body: { id_maestro, titulo, motivo, fecha }
+    const { id_maestro, titulo, motivo, fecha } = req.body;
  try {
-    const resultado = await insert_new_justificante(id_maestro, motivo, fecha_inicio, fecha_fin);
+    const resultado = await insert_new_justificante(id_maestro, titulo, motivo, fecha);
     if (resultado) {
         res.status(201).json({ 
             status: 'ok',

@@ -3,7 +3,28 @@ import cron from 'node-cron';
 
 function formatTime(value) {
     if (!value) return null;
+
+    // If it's already a time string like 'HH:MM' or 'HH:MM:SS', return HH:MM
+    if (typeof value === 'string') {
+        const timeMatch = value.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+        if (timeMatch) {
+            const hh = String(timeMatch[1]).padStart(2, '0');
+            const mm = timeMatch[2];
+            return `${hh}:${mm}`;
+        }
+        // If it's a full datetime string, try to parse it
+        const dTry = new Date(value);
+        if (!isNaN(dTry.getTime())) {
+            const hh = String(dTry.getHours()).padStart(2, '0');
+            const mm = String(dTry.getMinutes()).padStart(2, '0');
+            return `${hh}:${mm}`;
+        }
+        return null;
+    }
+
+    // If it's a Date object or timestamp
     const d = new Date(value);
+    if (isNaN(d.getTime())) return null;
     const hh = String(d.getHours()).padStart(2, '0');
     const mm = String(d.getMinutes()).padStart(2, '0');
     return `${hh}:${mm}`;
@@ -51,13 +72,15 @@ export async function teacher_list(){
     try{
         const [teacherids] = await connection.execute(
             `SELECT 
-            m.id_maestro, 
-            m.nombre, 
-            m.correo,
-            m.departamento,
-            d.name 
-            FROM Maestros m
-            LEFT JOIN Departments d ON m.departamento = d.id_department`
+                m.id_maestro, 
+                m.nombre, 
+                m.correo,
+                m.departamento,
+                d.name 
+             FROM Maestros m
+             LEFT JOIN Departments d ON m.departamento = d.id_department
+             INNER JOIN Usuarios u ON u.id_maestro = m.id_maestro
+             WHERE u.rol = 'maestro'`
         );
         if (!teacherids || teacherids.length === 0) {
             console.log('No hay maestros registrados');
@@ -198,6 +221,195 @@ export const inset_new_teacher = async (nombre,correo,telefono,uid_nfc,departame
         throw error;
     }
 }
+export const teacher_ausent = async () => {
+    try {
+        // Obtener el registro más reciente por maestro para el día de hoy y filtrar ausentes (status = 3)
+        const [ausentes] = await connection.execute(
+            `SELECT r.id_maestro, m.nombre AS name, i.src AS photo, r.fecha_update, r.status
+             FROM Registro_Asistencias r
+             INNER JOIN (
+               SELECT id_maestro, MAX(fecha) AS max_fecha
+               FROM Registro_Asistencias
+               WHERE DATE(fecha) = CURDATE()
+               GROUP BY id_maestro
+             ) recent ON recent.id_maestro = r.id_maestro AND recent.max_fecha = r.fecha
+             JOIN Maestros m ON m.id_maestro = r.id_maestro
+             LEFT JOIN Imagenes i ON i.tabla_origen = 'Maestros' AND i.id_record = m.id_maestro
+             JOIN Usuarios u ON u.id_maestro = m.id_maestro
+             WHERE u.rol = 'maestro' AND r.status = 3
+             ORDER BY m.nombre`);
+
+        if (!ausentes || ausentes.length === 0) return [];
+
+        return ausentes.map(a => ({
+            id: `T${String(a.id_maestro).padStart(3, '0')}`,
+            name: a.name,
+            photo: a.photo || null,
+            time: formatTime(a.fecha_update),
+            status: a.status
+        }));
+        
+    } catch (error) {
+        console.error('teacher_ausent error:', error);
+        throw error;
+    }
+}
+export const pendientes_justificantesyJustificantes= async () => { 
+    try {
+        // permisos pendientes (aprobado = 0)
+        const [permisos] = await connection.execute(
+            `SELECT p.id_permiso, p.hora_regristro, p.id_maestro, m.nombre AS name,
+                    im_maestro.src AS maestro_photo,
+                    ip.src AS record_photo,
+                    p.nombre_permiso, p.descripcion, p.aprobado, p.fecha_inicio, p.fecha_fin
+             FROM Permisos p
+             JOIN Maestros m ON m.id_maestro = p.id_maestro
+             LEFT JOIN Usuarios u ON u.id_maestro = m.id_maestro
+             LEFT JOIN Imagenes im_maestro ON im_maestro.tabla_origen = 'Maestros' AND im_maestro.id_record = m.id_maestro
+             LEFT JOIN Imagenes ip ON ip.tabla_origen = 'Permisos' AND ip.id_record = p.id_permiso
+             WHERE p.aprobado = 0 AND u.rol = 'maestro'`
+        );
+
+        // justificantes pendientes (autorizado = 0)
+        const [justificantes] = await connection.execute(
+        `SELECT j.id_justificante, j.id_maestro, j.titulo, m.nombre AS name,
+            im_maestro.src AS maestro_photo,
+            ij.src AS record_photo,
+            j.motivo, j.fecha, j.autorizado
+             FROM Justificantes j
+             JOIN Maestros m ON m.id_maestro = j.id_maestro
+             LEFT JOIN Usuarios u ON u.id_maestro = m.id_maestro
+             LEFT JOIN Imagenes im_maestro ON im_maestro.tabla_origen = 'Maestros' AND im_maestro.id_record = m.id_maestro
+             LEFT JOIN Imagenes ij ON ij.tabla_origen = 'Justificantes' AND ij.id_record = j.id_justificante
+             WHERE j.autorizado = 0 AND u.rol = 'maestro'`
+        );
+
+        const permisosMapped = (permisos || []).map(p => ({
+            id: `T${String(p.id_maestro).padStart(3, '0')}`,
+            name: p.name,
+            photo: p.maestro_photo || null,
+            // try hora_regristro (if exists), otherwise fallback to fecha_inicio
+            time: formatTime(p.hora_regristro) || formatTime(p.fecha_inicio) || null,
+            status: 2,
+            recordId: p.id_permiso,
+            recordType: 'Permiso',
+            // detalle extra del permiso
+            details: {
+                nombre_permiso: p.nombre_permiso,
+                descripcion: p.descripcion,
+                aprobado: p.aprobado,
+                fecha_inicio: setdateinformat(p.fecha_inicio) || null,
+                fecha_fin: setdateinformat(p.fecha_fin) || null,
+                hora_regristro: p.hora_regristro ? formatTime(p.hora_regristro) : null,
+                recordPhoto: p.record_photo || null
+            }
+        }));
+
+        const justificantesMapped = (justificantes || []).map(j => ({
+            id: `T${String(j.id_maestro).padStart(3, '0')}`,
+            name: j.name,
+            photo: j.maestro_photo || null,
+            time: j.fecha ? formatTime(j.fecha) : null,
+            status: 1,
+            recordId: j.id_justificante,
+            recordType: 'Justificante',
+            details: {
+                titulo: j.titulo || null,
+                motivo: j.motivo,
+                fecha: j.fecha ? setdateinformat(j.fecha) : null,
+                autorizado: j.autorizado,
+                recordPhoto: j.record_photo || null
+            }
+        }));
+
+        const combined = [...permisosMapped, ...justificantesMapped];
+
+        return combined;
+    } catch (error) {
+        console.error('pendientes_u_apro_justificantesyJustificantes error:', error);
+        throw error;
+    }
+}
+//create search Modal
+
+export const pendientes_u_apro_justificantesyJustificantes = async () => {
+    try {
+        // permisos
+        const [permisos] = await connection.execute(
+          `SELECT p.id_permiso, p.hora_regristro, p.id_maestro, m.nombre AS name, i.src AS photo, p.fecha_inicio, p.aprobado,
+                ip.src AS permiso_photo
+           FROM Permisos p
+           JOIN Maestros m ON m.id_maestro = p.id_maestro
+           LEFT JOIN Imagenes i ON i.tabla_origen = 'Maestros' AND i.id_record = m.id_maestro
+           LEFT JOIN Imagenes ip ON ip.tabla_origen = 'Permisos' AND ip.id_record = p.id_permiso
+           JOIN Usuarios u ON u.id_maestro = m.id_maestro
+           WHERE u.rol = 'maestro'`
+        );
+
+        // justificantes
+        const [justificantes] = await connection.execute(
+        `SELECT j.id_justificante, j.id_maestro, j.titulo, m.nombre AS name, i.src AS photo, j.fecha, j.autorizado,
+            ij.src AS justificante_photo, j.motivo
+           FROM Justificantes j
+           JOIN Maestros m ON m.id_maestro = j.id_maestro
+           LEFT JOIN Imagenes i ON i.tabla_origen = 'Maestros' AND i.id_record = m.id_maestro
+           LEFT JOIN Imagenes ij ON ij.tabla_origen = 'Justificantes' AND ij.id_record = j.id_justificante
+           JOIN Usuarios u ON u.id_maestro = m.id_maestro
+           WHERE u.rol = 'maestro'`
+        );
+
+        const permisosMapped = (permisos || []).map(p => ({
+            id: `P${String(p.id_permiso).padStart(3, '0')}`,
+            name: p.name,
+            photo: p.photo || null,
+            time: formatTime(p.hora_regristro) || formatTime(p.fecha_inicio) || null,
+            status: 2,
+            date: setdateinformat(p.fecha_inicio) || null,
+            isPending: p.aprobado == 1 ? false : true,
+            recordId: p.id_permiso,
+            recordType: 'permiso',
+            recordPhoto: p.permiso_photo || null
+        }));
+
+        const justificantesMapped = (justificantes || []).map(j => ({
+            id: `J${String(j.id_justificante).padStart(3, '0')}`,
+            name: j.name,
+            photo: j.photo || null,
+            time: j.fecha ? formatTime(j.fecha) : null,
+            status: 1,
+            date: setdateinformat(j.fecha) || null,
+            isPending: j.autorizado == 1 ? false : true,
+            recordId: j.id_justificante,
+            recordType: 'justificante',
+            recordPhoto: j.justificante_photo || null,
+            title: j.titulo || null,
+            motivo: j.motivo || null
+        }));
+
+        const combined = [...permisosMapped, ...justificantesMapped];
+
+        // Ordenar por fecha ascendente (más antiguo primero). Fechas nulas al final. Empate por nombre.
+        combined.sort((a, b) => {
+            const da = a.date || null;
+            const db = b.date || null;
+            if (da && db) {
+                const cmp = da.localeCompare(db);
+                if (cmp !== 0) return cmp;
+            } else if (da && !db) {
+                return -1;
+            } else if (!da && db) {
+                return 1;
+            }
+            return (a.name || '').localeCompare(b.name || '');
+        });
+
+        return combined;
+    } catch (error) {
+        console.error('pendientes_u_apro_justificantesyJustificantes error:', error);
+        throw error;
+    }
+};
+
 export const insert_new_permiso = async (id_maestro,nombre_permiso,descripcion, fecha_fin,fecha_inicio) => {
     try {
         const [permiso] = await connection.execute(
@@ -211,10 +423,10 @@ export const insert_new_permiso = async (id_maestro,nombre_permiso,descripcion, 
     } catch (error) {
     }
 }
-export const insert_new_justificante = async (id_maestro, motivo, fecha) => {
+export const insert_new_justificante = async (id_maestro, titulo, motivo, fecha) => {
     try {
         const [justificante] = await connection.execute(
-            'INSERT INTO Justificantes (id_maestro, motivo, fecha) VALUES (?,?,?)',[id_maestro, motivo, fecha]
+            'INSERT INTO Justificantes (id_maestro, titulo, motivo, fecha) VALUES (?,?,?,?)',[id_maestro, titulo, motivo, fecha]
         )
         if(justificante.affectedRows > 0){
             return true 
@@ -222,34 +434,39 @@ export const insert_new_justificante = async (id_maestro, motivo, fecha) => {
             return false
         }
     } catch (error) {
-        
+        console.error('insert_new_justificante error:', error);
+        throw error;
     }
 }   
 
 
 cron.schedule('0 0 * * *', async () => {
   const conn = await connection.getConnection();
-  try {
-    const insertSql = `
-      INSERT INTO Registro_Asistencias (id_maestro, id_nfc, status, fecha_update)
-      SELECT
-        m.id_maestro,
-        nfc.id_nfc,
-        CASE WHEN p.aprobado = 1 THEN 2 ELSE 3 END AS status,
-        NOW()
-      FROM Maestros m
-      INNER JOIN NFC_Maestros nfc ON m.id_maestro = nfc.id_maestro
-      LEFT JOIN Permisos p
-        ON p.id_maestro = m.id_maestro
-        AND p.fecha_inicio <= CURDATE()
-        AND p.fecha_fin >= CURDATE()
-      WHERE NOT EXISTS (
-        SELECT 1 FROM Registro_Asistencias r
-        WHERE r.id_maestro = m.id_maestro AND DATE(r.fecha) = CURDATE()
-      );
-    `;
-    await conn.execute(insertSql);
-    console.log('Cron: insertadas asistencias faltantes (si las había).');
+    try {
+        // Insert only for teachers who have at least one scheduled class today.
+        // NOTE: assumes `Schedules.day_of_week` uses 1=Monday .. 7=Sunday.
+        const insertSql = `
+            INSERT INTO Registro_Asistencias (id_maestro, id_nfc, status, fecha_update)
+            SELECT DISTINCT
+                m.id_maestro,
+                nfc.id_nfc,
+                CASE WHEN p.aprobado = 1 THEN 2 ELSE 3 END AS status,
+                NOW()
+            FROM Maestros m
+            INNER JOIN NFC_Maestros nfc ON m.id_maestro = nfc.id_maestro
+            -- join schedules for the current weekday (WEEKDAY + 1 -> 1=Monday..7=Sunday)
+            INNER JOIN Schedules s ON s.id_maestro = m.id_maestro AND s.day_of_week = (WEEKDAY(CURDATE()) + 1)
+            LEFT JOIN Permisos p
+                ON p.id_maestro = m.id_maestro
+                AND p.fecha_inicio <= CURDATE()
+                AND p.fecha_fin >= CURDATE()
+            WHERE NOT EXISTS (
+                SELECT 1 FROM Registro_Asistencias r
+                WHERE r.id_maestro = m.id_maestro AND DATE(r.fecha) = CURDATE()
+            );
+        `;
+        await conn.execute(insertSql);
+        console.log('Cron: insertadas asistencias faltantes (solo para profesores con clase hoy).');
   } catch (err) {
     console.error('Error en cron de asistencias:', err);
   } finally {
@@ -361,14 +578,21 @@ export async function getListOfPermissionsAndJust(id_maestro) {
     try {
         // Obtener permisos
         const [permisos] = await connection.execute(
-            `SELECT id_permiso, id_maestro, nombre_permiso, descripcion, fecha_inicio, fecha_fin, aprobado
-             FROM Permisos WHERE id_maestro = ?`,
+            `SELECT p.id_permiso, p.id_maestro, p.nombre_permiso, p.descripcion, p.fecha_inicio, p.fecha_fin, p.aprobado,
+                    ip.src AS permiso_photo
+             FROM Permisos p
+             LEFT JOIN Imagenes ip ON ip.tabla_origen = 'Permisos' AND ip.id_record = p.id_permiso
+             WHERE p.id_maestro = ?`,
             [id_maestro]
         );
 
         // Obtener justificantes
         const [justificantes] = await connection.execute(
-            `SELECT id_justificante, id_maestro, motivo, fecha, autorizado FROM Justificantes WHERE id_maestro = ?`,
+            `SELECT j.id_justificante, j.id_maestro, j.titulo, j.motivo, j.fecha, j.autorizado,
+                    ij.src AS justificante_photo
+             FROM Justificantes j
+             LEFT JOIN Imagenes ij ON ij.tabla_origen = 'Justificantes' AND ij.id_record = j.id_justificante
+             WHERE j.id_maestro = ?`,
             [id_maestro]
         );
 
@@ -384,7 +608,8 @@ export async function getListOfPermissionsAndJust(id_maestro) {
                 title: p.nombre_permiso,
                 description: p.descripcion,
                 fecha_fin: setdateinformat(p.fecha_fin) || null,
-                autorizado: p.autorizado
+                autorizado: p.autorizado,
+                recordPhoto: p.permiso_photo || null
             });
         }
 
@@ -395,8 +620,10 @@ export async function getListOfPermissionsAndJust(id_maestro) {
                 date: setdateinformat(j.fecha) || null,
                 status: 1,
                 type: 'justificante',
+                titulo: j.titulo || null,
                 motivo: j.motivo,
-                autorizado: j.autorizado
+                autorizado: j.autorizado,
+                recordPhoto: j.justificante_photo || null
             });
         }
 
@@ -413,6 +640,108 @@ export async function getListOfPermissionsAndJust(id_maestro) {
         throw error;
     }
 }
+export const list_permisos_and_justificantes = async (id_maestro) => {
+    try {
+        // info maestro
+        const [info_maestro] = await connection.execute(
+            `SELECT nombre, departamento FROM Maestros WHERE id_maestro = ?`,
+            [id_maestro]
+        );
+
+        // photo (opcional)
+        const [fotos] = await connection.execute(
+            `SELECT src FROM Imagenes WHERE tabla_origen = ? AND id_record = ? LIMIT 1`,
+            ['Maestros', id_maestro]
+        );
+        const photo = fotos && fotos.length ? fotos[0].src : null;
+
+        // permisos
+        const [permisos] = await connection.execute(
+            `SELECT id_permiso, id_maestro, nombre_permiso, descripcion, fecha_inicio, fecha_fin, aprobado
+             FROM Permisos WHERE id_maestro = ?`,
+            [id_maestro]
+        );
+
+        // justificantes
+        const [justificantes] = await connection.execute(
+            `SELECT j.id_justificante, j.id_maestro, j.titulo, j.motivo, j.fecha, j.autorizado,
+                    ij.src AS justificante_photo
+             FROM Justificantes j
+             LEFT JOIN Imagenes ij ON ij.tabla_origen = 'Justificantes' AND ij.id_record = j.id_justificante
+             WHERE j.id_maestro = ?`,
+            [id_maestro]
+        );
+
+        // construir lista unificada
+        const items = [];
+        for (const p of permisos) {
+            items.push({
+                id: p.id_permiso,
+                type: 'permiso',
+                title: p.nombre_permiso,
+                description: p.descripcion,
+                fecha_inicio: setdateinformat(p.fecha_inicio),
+                aprobado: p.aprobado ? 1 : 0
+            });
+        }
+        for (const j of justificantes) {
+            items.push({
+                id: j.id_justificante,
+                type: 'justificante',
+                titulo: j.titulo || null,
+                motivo: j.motivo,
+                fecha: setdateinformat(j.fecha),
+                autorizado: j.autorizado ? 1 : 0,
+                recordPhoto: j.justificante_photo || null
+            });
+        }
+
+        // resumen/flags
+        const anyAutorizado = items.some(i => (i.aprobado && i.aprobado === 1) || (i.autorizado && i.autorizado === 1)) ? 1 : 0;
+
+        const teacher = info_maestro && info_maestro.length ? info_maestro[0] : { nombre: null, departamento: null };
+
+        return {
+            id: `T${String(id_maestro).padStart(3, '0')}`,
+            name: teacher.nombre,
+            photo,
+            autorizado: anyAutorizado,
+            records: items,
+                // lista plana con la estructura compacta solicitada (se repite la info del maestro por cada registro)
+                list: (() => {
+                    const flat = [];
+                    // Use stable teacher id format 'T###' without random suffix so components can reuse it predictably
+                    const teacherId = `T${String(id_maestro).padStart(3, '0')}`;
+                    // agregar permisos (status = 2)
+                    for (const p of permisos) {
+                        const timeVal = p.fecha_inicio ? formatTime(new Date(p.fecha_inicio)) : null;
+                        flat.push({
+                            id: teacherId,
+                            name: teacher.nombre,
+                            photo,
+                            time: timeVal,
+                            status: 2
+                        });
+                    }
+                    // agregar justificantes (status = 1)
+                    for (const j of justificantes) {
+                        const timeVal = j.fecha ? formatTime(new Date(j.fecha)) : null;
+                        flat.push({
+                            id: teacherId,
+                            name: teacher.nombre,
+                            photo,
+                            time: timeVal,
+                            status: 1
+                        });
+                    }
+                    return flat;
+                })()
+        };
+    } catch (error) {
+        console.error('list_permisos_and_justificantes error:', error);
+        throw error;
+    }
+};
 export async function UpdateDayProfileAdmin (id_maestro, date, status) {
     try {
         // Validar parámetros recibidos
@@ -468,9 +797,11 @@ export async function getReportData(startDate, endDate, id_maestro = null) {
 
         // Permisos en rango
         const [permisos] = await connection.execute(
-            `SELECT p.id_permiso, p.id_maestro, p.nombre_permiso, p.descripcion, p.fecha_inicio, p.fecha_fin, p.aprobado, m.nombre as nombre_maestro
+            `SELECT p.id_permiso, p.id_maestro, p.nombre_permiso, p.descripcion, p.fecha_inicio, p.fecha_fin, p.aprobado, m.nombre as nombre_maestro,
+                    ip.src AS permiso_photo
              FROM Permisos p
              JOIN Maestros m ON m.id_maestro = p.id_maestro
+             LEFT JOIN Imagenes ip ON ip.tabla_origen = 'Permisos' AND ip.id_record = p.id_permiso
              WHERE (DATE(p.fecha_inicio) BETWEEN ? AND ?) OR (DATE(p.fecha_fin) BETWEEN ? AND ?)
              ${id_maestro ? ' AND p.id_maestro = ?' : ''}
              ORDER BY p.id_maestro, p.fecha_inicio`,
@@ -479,9 +810,11 @@ export async function getReportData(startDate, endDate, id_maestro = null) {
 
         // Justificantes en rango
         const [justificantes] = await connection.execute(
-            `SELECT j.id_justificante, j.id_maestro, j.motivo, j.fecha, j.autorizado, m.nombre as nombre_maestro
+            `SELECT j.id_justificante, j.id_maestro, j.titulo, j.motivo, j.fecha, j.autorizado, m.nombre as nombre_maestro,
+                    ij.src AS justificante_photo
              FROM Justificantes j
              JOIN Maestros m ON m.id_maestro = j.id_maestro
+             LEFT JOIN Imagenes ij ON ij.tabla_origen = 'Justificantes' AND ij.id_record = j.id_justificante
              WHERE DATE(j.fecha) BETWEEN ? AND ? ${id_maestro ? ' AND j.id_maestro = ?' : ''}
              ORDER BY j.id_maestro, j.fecha`,
             id_maestro ? [startDate, endDate, id_maestro] : [startDate, endDate]
@@ -492,4 +825,54 @@ export async function getReportData(startDate, endDate, id_maestro = null) {
         console.error('getReportData error:', error);
         throw error;
     }
+}
+
+export const estadistica_asistencias = async (teacher_id) => {
+    try {
+        const [stats_justifcantes] = await connection.execute('SELECT * FROM Registro_Asistencias WHERE id_maestro = ? AND status = ?;', [teacher_id, 1]);
+        const [stats_permisos] = await connection.execute('SELECT * FROM Registro_Asistencias WHERE id_maestro = ? AND status = ?;', [teacher_id, 2]);
+        const [stats_asistencias] = await connection.execute('SELECT * FROM Registro_Asistencias WHERE id_maestro = ? AND status = ?;', [teacher_id, 4]);
+        const [stats_faltas] = await connection.execute('SELECT * FROM Registro_Asistencias WHERE id_maestro = ? AND status = ?;', [teacher_id, 3]);
+        const [stats_retardo] = await connection.execute('SELECT * FROM Registro_Asistencias WHERE id_maestro = ? AND status = ?;', [teacher_id, 5]);
+        const data = [
+        // 13 asistencias (3)
+        ...Array(stats_faltas.length).fill({ status: 3 }),
+        // 3 faltas (4)
+        ...Array(stats_asistencias.length).fill({ status: 4 }),
+        // 4 retardos (5)
+        ...Array(stats_retardo.length).fill({ status: 5 }),
+        // 2 justificados (1)
+        ...Array(stats_justifcantes.length).fill({ status: 1 }),
+        // 3 permisos (2)
+        ...Array(stats_permisos.length).fill({ status: 2 }),
+        ];
+        return data;
+    } catch (error) {
+        throw error;
+    }
+}
+export const update_aprove_status = async (record_type, record_id, approve_status) => {
+    try {
+        let tableName = '';
+        let statusField = '';
+        if (record_type === 'permiso') {
+            tableName = 'Permisos';
+            statusField = 'aprobado';
+        } else if (record_type === 'justificante') {
+            tableName = 'Justificantes';
+            statusField = 'autorizado';
+        } else {
+            throw new Error('Invalid record type');
+        }
+
+        const [result] = await connection.execute(
+            `UPDATE ${tableName} SET ${statusField} = ? WHERE ${tableName === 'Permisos' ? 'id_permiso' : 'id_justificante'} = ?`,
+            [approve_status, record_id]
+        );
+
+        return result.affectedRows > 0;
+    } catch (error) {
+        console.error('update_aprove_status error:', error);
+        throw error;
+    }   
 }

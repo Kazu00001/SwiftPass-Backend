@@ -1,4 +1,5 @@
-import {teacher_list, attendance_data, getScheduleByTeacher, getListOfPermissionsAndJust,UpdateDayProfileAdmin} from "../DB/querySql.js";
+import {teacher_list, attendance_data, getScheduleByTeacher, getListOfPermissionsAndJust,UpdateDayProfileAdmin, list_permisos_and_justificantes,
+    estadistica_asistencias, teacher_ausent, pendientes_justificantesyJustificantes, pendientes_u_apro_justificantesyJustificantes, update_aprove_status} from "../DB/querySql.js";
 
 export const get_Teacher_list =  async (req, res) => {
     try {
@@ -81,5 +82,102 @@ export const update_Day_Profile_Admin = async (req, res) => {
     } catch (error) {
         console.error('Error al actualizar el perfil del día del maestro:', error);
         res.status(500).json({ mensaje: 'Error del servidor.' });
+    }
+}
+export const listar_permisos_y_justificantes = async (req, res) => {
+    const { id_maestro } = req.params;
+    try {
+        const records = await list_permisos_and_justificantes(id_maestro);
+        res.status(200).json({ 
+            status: 'ok',
+            records: records });
+        console.log('Listado de permisos y justificantes enviado correctamente para el maestro ID:', id_maestro);
+    } catch (error) {
+        console.error('Error al listar permisos y justificantes del maestro:', error);
+        res.status(500).json({ mensaje: 'Error del servidor.' });
+        
+    }
+}   
+
+export const estadisticaAsistencias = async (req, res) => {
+    const { id_maestro } = req.params;
+    try {
+        const stats = await estadistica_asistencias(id_maestro);
+        res.status(200).json({ 
+            status: 'ok',
+            statistics: stats });
+        console.log('Estadísticas de asistencias enviadas correctamente para el maestro ID:', id_maestro);
+    } catch (error) {
+        console.error('Error al obtener estadísticas de asistencias del maestro:', error);
+        res.status(500).json({ mensaje: 'Error del servidor.' });
+        
+    }
+}   
+export const teacherAusent = async (req, res) => {  
+
+    try {
+        const ausentes = await teacher_ausent();
+        res.status(200).json({ 
+            status: 'ok',
+            ausentes: ausentes });
+        console.log('Lista de maestros ausentes enviada correctamente');
+        
+    } catch (error) {
+        console.error('Error al obtener la lista de maestros ausentes:', error);
+        res.status(500).json({ mensaje: 'Error del servidor.' });
+        
+    }
+}
+export const pendientesJus_Per = async(req,res) =>{
+    try {
+        const pendientes= await pendientes_justificantesyJustificantes();
+        res.status(200).json({
+            status: 'ok',
+            pendientes: pendientes
+        })
+    } catch (error) {
+        res.status(500).json({ mensaje: 'Error del servidor.' });
+    }
+}
+export const pendientesUaproJus_Per = async(req,res) =>{
+    try {
+        const pendientes= await pendientes_u_apro_justificantesyJustificantes();
+        res.status(200).json({
+            status: 'ok',
+            pendientes: pendientes
+        })
+    } catch (error) {
+        res.status(500).json({ mensaje: 'Error del servidor.' });
+    }
+}   
+
+export const updateRecordApproval = async (req, res) => {
+    // Expect body: { id_record, type, teacher_id, approve_status }
+    const { id_record, type, teacher_id, approve_status } = req.body;
+    if (!id_record || !type) {
+        return res.status(400).json({ status: 'error', mensaje: 'Faltan id_record o type en el body.' });
+    }
+    // normalize type
+    const recordType = String(type).toLowerCase();
+    if (recordType !== 'permiso' && recordType !== 'justificante') {
+        return res.status(400).json({ status: 'error', mensaje: 'type debe ser "permiso" o "justificante".' });
+    }
+    const approved = typeof approve_status !== 'undefined' ? approve_status : 1;
+    try {
+        const ok = await update_aprove_status(recordType, id_record, approved);
+        if (!ok) {
+            return res.status(404).json({ status: 'error', mensaje: 'Registro no encontrado o no actualizado.' });
+        }
+
+        // devolver listado actualizado del maestro si se proporcionó teacher_id
+        if (teacher_id) {
+            const records = await getListOfPermissionsAndJust(teacher_id);
+            return res.status(200).json({ status: 'ok', mensaje: 'Estado actualizado.', records });
+        }
+
+        return res.status(200).json({ status: 'ok', mensaje: 'Estado actualizado.' });
+    } catch (error) {
+        console.error('updateRecordApproval error:', error);
+        return res.status(500).json({ status: 'error', mensaje: 'Error del servidor.' });
     }
 }
