@@ -1,6 +1,6 @@
 import express from 'express';
 import { get_Teacher_list, get_Attendance_data , schedule, get_Permissions_and_Justificantes, update_Day_Profile_Admin, listar_permisos_y_justificantes,
-    estadisticaAsistencias, teacherAusent, pendientesJus_Per, pendientesUaproJus_Per, updateRecordApproval
+    estadisticaAsistencias, teacherAusent, pendientesJus_Per, pendientesUaproJus_Per, updateRecordApproval, getTeacherProfileImage
 } from '../controller/Teacher_list_Controller.js';
 const router = express.Router();
 
@@ -15,4 +15,6 @@ router.get('/teachers/ausentes', teacherAusent);
 router.get('/teachers/pendientes-jus-per', pendientesJus_Per);  
 router.get('/teachers/pendientes-uapro-jus-per', pendientesUaproJus_Per);
 router.put('/teachers/record/approve', updateRecordApproval);
+// Perfil: obtener URL de imagen de perfil del maestro (JSON) o redirigir con ?redirect=1
+router.get('/teachers/:id_maestro/photo', getTeacherProfileImage);
 export default router;

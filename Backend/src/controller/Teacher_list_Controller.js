@@ -1,5 +1,5 @@
 import {teacher_list, attendance_data, getScheduleByTeacher, getListOfPermissionsAndJust,UpdateDayProfileAdmin, list_permisos_and_justificantes,
-    estadistica_asistencias, teacher_ausent, pendientes_justificantesyJustificantes, pendientes_u_apro_justificantesyJustificantes, update_aprove_status} from "../DB/querySql.js";
+    estadistica_asistencias, teacher_ausent, pendientes_justificantesyJustificantes, pendientes_u_apro_justificantesyJustificantes, update_aprove_status, getImageForTeacher} from "../DB/querySql.js";
 
 export const get_Teacher_list =  async (req, res) => {
     try {
@@ -178,6 +178,36 @@ export const updateRecordApproval = async (req, res) => {
         return res.status(200).json({ status: 'ok', mensaje: 'Estado actualizado.' });
     } catch (error) {
         console.error('updateRecordApproval error:', error);
+        return res.status(500).json({ status: 'error', mensaje: 'Error del servidor.' });
+    }
+}
+
+export const getTeacherProfileImage = async (req, res) => {
+    const { id_maestro } = req.params;
+    const { redirect } = req.query;
+    if (!id_maestro) return res.status(400).json({ status: 'error', mensaje: 'Falta id_maestro en la ruta.' });
+    try {
+        const src = await getImageForTeacher(id_maestro);
+        let finalSrc = null;
+        if (src) {
+            // if src looks like absolute URL, use it; otherwise assume stored filename and serve under /images
+            if (/^https?:\/\//i.test(src) || src.startsWith('/')) {
+                finalSrc = src;
+            } else {
+                finalSrc = `/images/${src}`;
+            }
+        } else {
+            // fallback to a conventional filename if exists (e.g., Usuario_<id>.jpg)
+            finalSrc = `/images/Usuario_${id_maestro}.jpg`;
+        }
+
+        if (redirect && String(redirect) === '1') {
+            return res.redirect(finalSrc);
+        }
+
+        return res.status(200).json({ status: 'ok', src: finalSrc });
+    } catch (error) {
+        console.error('getTeacherProfileImage error:', error);
         return res.status(500).json({ status: 'error', mensaje: 'Error del servidor.' });
     }
 }

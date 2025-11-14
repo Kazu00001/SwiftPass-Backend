@@ -425,19 +425,31 @@ export const insert_new_permiso = async (id_maestro,nombre_permiso,descripcion, 
 }
 export const insert_new_justificante = async (id_maestro, titulo, motivo, fecha) => {
     try {
-        const [justificante] = await connection.execute(
+        const [result] = await connection.execute(
             'INSERT INTO Justificantes (id_maestro, titulo, motivo, fecha) VALUES (?,?,?,?)',[id_maestro, titulo, motivo, fecha]
-        )
-        if(justificante.affectedRows > 0){
-            return true 
-        }else{
-            return false
-        }
+        );
+        // devolver el id insertado para poder asociar imágenes
+        if (result && result.insertId) return result.insertId;
+        return null;
     } catch (error) {
         console.error('insert_new_justificante error:', error);
         throw error;
     }
-}   
+}
+
+export const insertImage = async (tabla_origen, id_record, src) => {
+    try {
+        const [result] = await connection.execute(
+            'INSERT INTO Imagenes (tabla_origen, id_record, src) VALUES (?, ?, ?)',
+            [tabla_origen, id_record, src]
+        );
+        if (result && result.insertId) return result.insertId;
+        return null;
+    } catch (error) {
+        console.error('insertImage error:', error);
+        throw error;
+    }
+}
 
 
 cron.schedule('0 0 * * *', async () => {
@@ -637,6 +649,21 @@ export async function getListOfPermissionsAndJust(id_maestro) {
         return results;
     } catch (error) {
         console.error('getListOfPermissionsAndJust error:', error);
+        throw error;
+    }
+}
+
+// Obtener la ruta/registro de imagen asociada a un maestro (si existe)
+export async function getImageForTeacher(id_maestro) {
+    try {
+        const [rows] = await connection.execute(
+            `SELECT src FROM Imagenes WHERE tabla_origen = 'Maestros' AND id_record = ? LIMIT 1`,
+            [id_maestro]
+        );
+        if (rows && rows.length > 0) return rows[0].src || null;
+        return null;
+    } catch (error) {
+        console.error('getImageForTeacher error:', error);
         throw error;
     }
 }
